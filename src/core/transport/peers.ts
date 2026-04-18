@@ -38,7 +38,7 @@ export interface PeerStatus {
 const CLOCK_WARN_MS = 3 * 60 * 1000;
 
 /**
- * Check if a peer is reachable by making a GET /api/sessions request.
+ * Check if a peer is reachable by making a GET /api/health request.
  *
  * ONE-WAY ONLY. This verifies local→peer reach. It does NOT verify that
  * the peer can reach back (peer→local). Asymmetric-NAT, one-sided firewall
@@ -47,13 +47,16 @@ const CLOCK_WARN_MS = 3 * 60 * 1000;
  *
  * For symmetric pair verification, see `getFederationStatusSymmetric()`
  * (PR #398) and the `maw federation --verify` CLI flag.
+ *
+ * Uses /api/health because it is universally public across maw-js forks.
+ * /api/sessions is auth-gated on some forks (#horizon-probe-fix).
  */
 async function checkPeerReachable(url: string): Promise<{
   reachable: boolean; latency: number; node?: string; agents?: string[]; clockDeltaMs?: number;
 }> {
   const start = Date.now();
   try {
-    const res = await curlFetch(`${url}/api/sessions`, { timeout: cfgTimeout("http") });
+    const res = await curlFetch(`${url}/api/health`, { timeout: cfgTimeout("http") });
     const latency = Date.now() - start;
     // Fetch identity for node dedup (#192) + clock delta (#268)
     let node: string | undefined;
