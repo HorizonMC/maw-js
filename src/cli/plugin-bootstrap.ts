@@ -19,7 +19,18 @@ export async function runBootstrap(pluginDir: string, srcDir: string): Promise<v
     if (existsSync(bundled)) {
       for (const d of readdirSync(bundled)) {
         if (existsSync(join(bundled, d, "plugin.json")) || existsSync(join(bundled, d, "index.ts"))) {
-          symlinkSync(join(bundled, d), join(pluginDir, d));
+          try {
+            symlinkSync(join(bundled, d), join(pluginDir, d));
+          } catch (e: any) {
+            // Windows fallback: symlink requires SeCreateSymbolicLinkPrivilege (Developer Mode or admin).
+            // Copy instead so bundled plugins still resolve. Relative imports will still work because the
+            // copy preserves the plugin's internal structure; only maw-js core updates won't propagate.
+            if (e?.code === "EPERM" || e?.code === "EACCES") {
+              cpSync(join(bundled, d), join(pluginDir, d), { recursive: true });
+            } else {
+              throw e;
+            }
+          }
         }
       }
     }
