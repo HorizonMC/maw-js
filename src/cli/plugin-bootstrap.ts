@@ -22,11 +22,17 @@ export async function runBootstrap(pluginDir: string, srcDir: string): Promise<v
           try {
             symlinkSync(join(bundled, d), join(pluginDir, d));
           } catch (e: any) {
-            // Windows fallback: symlink requires SeCreateSymbolicLinkPrivilege (Developer Mode or admin).
-            // Copy instead so bundled plugins still resolve. Relative imports will still work because the
-            // copy preserves the plugin's internal structure; only maw-js core updates won't propagate.
             if (e?.code === "EPERM" || e?.code === "EACCES") {
-              cpSync(join(bundled, d), join(pluginDir, d), { recursive: true });
+              // Windows: symlink requires SeCreateSymbolicLinkPrivilege (Developer Mode or admin).
+              // Try directory junction first — no admin needed, NTFS-native, preserves relative
+              // imports that escape the plugin dir (../../../sdk, ../../../core/paths).
+              try {
+                symlinkSync(join(bundled, d), join(pluginDir, d), "junction");
+              } catch {
+                // Last resort: copy. Breaks imports that escape the plugin dir,
+                // but leaves self-contained plugins functional.
+                cpSync(join(bundled, d), join(pluginDir, d), { recursive: true });
+              }
             } else {
               throw e;
             }
