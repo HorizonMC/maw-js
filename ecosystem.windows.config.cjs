@@ -16,6 +16,7 @@ module.exports = {
       env: {
         MAW_HOST: 'local',
         MAW_PORT: '3456',
+        MAW_UI_DIR: 'C:\\Users\\Lenovo\\repos\\Soul-Brews-Studio\\maw-ui\\dist',
       },
     },
   ],
