@@ -9,8 +9,28 @@ import { resolveTarget } from "../core/routing";
 import { processMirror } from "../commands/plugins/overview/impl";
 import { resolveFleetSession } from "../commands/shared/wake";
 import { WakeBody, SleepBody, SendBody } from "../lib/schemas";
+import { FLEET_DIR } from "../core/paths";
+import { readdirSync, readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 
 export const sessionsApi = new Elysia();
+
+/** Synthesize virtual sessions from fleet-config when tmux is unavailable
+ *  (Windows without WSL, minimal install, etc). Windows show active:false
+ *  so UIs that render them as idle rooms rather than live panes. */
+function virtualSessionsFromFleet(): Array<{ name: string; windows: Array<{ name: string; active: boolean }>; source: string }> {
+  try {
+    if (!existsSync(FLEET_DIR)) return [];
+    const files = readdirSync(FLEET_DIR).filter(f => f.endsWith(".json"));
+    return files.map(f => {
+      try {
+        const cfg = JSON.parse(readFileSync(join(FLEET_DIR, f), "utf-8"));
+        const windows = (cfg.windows || []).map((w: any) => ({ name: w.name, active: false }));
+        return { name: cfg.name || f.replace(/\.json$/, ""), windows, source: "fleet" };
+      } catch { return null; }
+    }).filter((x): x is NonNullable<typeof x> => x !== null && x.windows.length > 0);
+  } catch { return []; }
+}
 
 /** Resolve oracle name → tmux target, same logic as local peek (#273). */
 function resolveCapture(query: string, sessions: { name: string }[]): string {
@@ -34,6 +54,10 @@ sessionsApi.get("/sessions", async ({ query }) => {
     return local.map(s => ({ ...s, source: "local" }));
   }
   const aggregated = await getAggregatedSessions(local);
+  if (aggregated.length === 0) {
+    const virtual = virtualSessionsFromFleet();
+    if (virtual.length > 0) return virtual;
+  }
   return aggregated;
 }, {
   query: t.Object({
