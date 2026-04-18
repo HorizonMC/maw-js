@@ -3,10 +3,11 @@ import { getFederationStatus } from "../core/transport/peers";
 import { loadConfig } from "../config";
 import { listSnapshots, loadSnapshot, latestSnapshot } from "../core/fleet/snapshot";
 import { hostedAgents } from "../commands/shared/federation-sync";
-import { readFileSync, readdirSync } from "fs";
+import { readFileSync, readdirSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { FLEET_DIR } from "../core/paths";
+import { verify } from "../lib/federation-auth";
 
 // Re-export so existing importers (and any future code) can still reach
 // hostedAgents via the API module. The canonical home is federation-sync.ts.
@@ -83,6 +84,42 @@ federationApi.get("/fleet", () => {
   } catch {
     return { fleet: [] };
   }
+});
+
+/** Mailbox-drop — async federation messaging for sleeping/virtual agents.
+ *  Signed HMAC POST. Writes to ψ/inbox/federation/<target>/<ts>.md in
+ *  cwd. Lets peers deliver messages to agents that never live in tmux
+ *  (Claude Code sessions, non-tmux hosts, offline fleets). */
+federationApi.post("/federation/inbox", async ({ request, body, set }) => {
+  const config = loadConfig();
+  const token = config.federationToken;
+  if (!token) { set.status = 503; return { error: "federation disabled: no token configured" }; }
+
+  const tsHeader = request.headers.get("x-maw-timestamp");
+  const sigHeader = request.headers.get("x-maw-signature");
+  if (!tsHeader || !sigHeader) { set.status = 401; return { error: "missing auth headers" }; }
+  const ts = parseInt(tsHeader, 10);
+  if (!Number.isFinite(ts)) { set.status = 401; return { error: "invalid timestamp" }; }
+  if (!verify(token, "POST", "/api/federation/inbox", ts, sigHeader)) {
+    set.status = 401; return { error: "invalid signature" };
+  }
+
+  const b = body as { target?: unknown; text?: unknown; sender?: unknown; type?: unknown };
+  const target = typeof b.target === "string" && /^[a-zA-Z0-9_.\-]+$/.test(b.target) ? b.target : null;
+  const text = typeof b.text === "string" ? b.text : null;
+  if (!target || !text) { set.status = 400; return { error: "target (safe chars) + text required" }; }
+  const sender = typeof b.sender === "string" ? b.sender : "unknown";
+  const type = typeof b.type === "string" ? b.type : "message";
+
+  const tsStr = new Date().toISOString().replace(/[:.]/g, "-");
+  const inboxRoot = process.env.MAW_INBOX_ROOT || process.cwd();
+  const dir = join(inboxRoot, "ψ", "inbox", "federation", target);
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${tsStr}-from-${sender}.md`);
+  const content = `---\nfrom: ${sender}\ntarget: ${target}\ntype: ${type}\nreceived: ${new Date().toISOString()}\n---\n\n${text}\n`;
+  writeFileSync(file, content, "utf8");
+  const rel = file.slice(inboxRoot.length).replace(/^[\\/]+/, "").replace(/\\/g, "/");
+  return { ok: true, target, file: rel, id: `fed-${tsStr}` };
 });
 
 /** Auth status — public diagnostic endpoint (never reveals the token) */
